@@ -14,6 +14,9 @@ import {
   vec,
 } from '@shopify/react-native-skia';
 import { useRecordingStore } from '@/stores/recording-store';
+import { RecordingButton } from '@/components/RecordingButton';
+import { VoiceNoteCard } from '@/components/VoiceNoteCard';
+import { Waveform } from '@/components/Waveform';
 
 const BAR_COUNT = 40;
 const WAVEFORM_HEIGHT = 140;
@@ -22,9 +25,11 @@ export default function HomeScreen() {
   const {
     isRecording,
     recordingUri,
+    notes,
     setIsRecording,
     setRecordingUri,
     setDurationMillis,
+    addNote,
   } = useRecordingStore();
 
   const recorder = useAudioRecorder({
@@ -153,7 +158,21 @@ export default function HomeScreen() {
     try {
       await recorder.stop();
 
-      setRecordingUri(recorder.uri);
+      const uri = recorder.uri;
+
+      if (uri) {
+        const note = {
+          id: `${Date.now()}`,
+          uri,
+          title: `Voice Note ${notes.length + 1}`,
+          durationMillis: recorderState.durationMillis,
+          createdAt: new Date().toISOString(),
+        };
+
+        addNote(note);
+        setRecordingUri(uri);
+      }
+
       setIsRecording(false);
       setDurationMillis(recorderState.durationMillis);
     } catch (error) {
@@ -193,58 +212,32 @@ export default function HomeScreen() {
         </Text>
 
         <View className="mt-10 h-[140px] w-full overflow-hidden rounded-2xl bg-zinc-900">
-          <Canvas
-            style={{
-              width: '100%',
-              height: WAVEFORM_HEIGHT,
-            }}
-          >
-            {levels.map((level, index) => {
-              const barWidth = 3;
-              const gap = 4;
-              const x = 12 + index * (barWidth + gap);
-
-              const centerY = WAVEFORM_HEIGHT / 2;
-
-              const halfHeight = Math.max(
-                4,
-                level * (WAVEFORM_HEIGHT / 2 - 12),
-              );
-
-              return (
-                <Line
-                  key={index}
-                  p1={vec(x, centerY - halfHeight)}
-                  p2={vec(x, centerY + halfHeight)}
-                  color="#ef4444"
-                  strokeWidth={barWidth}
-                  strokeCap="round"
-                />
-              );
-            })}
-          </Canvas>
+         <Waveform levels={levels} />
         </View>
 
-        <Pressable
+       <RecordingButton
+          isRecording={isRecording}
           onPress={
             isRecording
               ? stopRecording
-              : startRecording
+              : startRecording 
           }
-          className={`mt-10 h-24 w-24 items-center justify-center rounded-full ${
-            isRecording
-              ? 'bg-red-500'
-              : 'bg-white'
-          }`}
-        >
-          <View
-            className={`h-8 w-8 ${
-              isRecording
-                ? 'rounded-md bg-white'
-                : 'rounded-full bg-red-500'
-            }`}
-          />
-        </Pressable>
+        />
+
+        {notes.length > 0 && (
+          <View className="mt-10 w-full">
+            <Text className="mb-3 text-xl font-bold text-white">
+              Voice Notes
+            </Text>
+
+            {notes.map((note) => (
+              <VoiceNoteCard
+                key={note.id}
+                note={note}
+              />
+            ))}
+          </View>
+        )}
 
         {recordingUri && (
           <View className="mt-10 w-full rounded-2xl bg-zinc-900 p-4">
