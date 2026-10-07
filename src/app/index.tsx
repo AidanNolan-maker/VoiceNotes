@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import {
   AudioModule,
@@ -7,6 +7,14 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import {
+  Canvas,
+  Line,
+  vec,
+} from '@shopify/react-native-skia';
+
+const BAR_COUNT = 40;
+const WAVEFORM_HEIGHT = 140;
 
 export default function HomeScreen() {
   const recorder = useAudioRecorder({
@@ -18,6 +26,11 @@ export default function HomeScreen() {
 
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
+  const [levels, setLevels] = useState<number[]>(
+    Array(BAR_COUNT).fill(0.08),
+  );
+
+  const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const configureAudio = async () => {
@@ -51,6 +64,32 @@ export default function HomeScreen() {
 
     configureAudio();
   }, []);
+
+  useEffect(() => {
+    if (recorderState.isRecording) {
+      animationRef.current = setInterval(() => {
+        setLevels((current) =>
+           current.map(() => 0.08 + Math.random() * 0.75),
+        );
+      }, 80);
+    } else {
+      if (animationRef.current) {
+        clearInterval(animationRef.current);
+        animationRef.current = null;
+      }
+
+      setLevels((current) =>
+        current.map(() => 0.08),
+      );
+    }
+
+    return () => {
+      if (animationRef.current) {
+        clearInterval(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [recorderState.isRecording]);
 
   const startRecording = async () => {
     if (!permissionGranted) {
@@ -116,6 +155,38 @@ export default function HomeScreen() {
       <Text className="mt-8 text-5xl font-semibold text-white">
         {formattedDuration}
       </Text>
+
+      <View className="mt-10 h-[140px] w-full overflow-hidden rounded-2xl bg-zinc-900">
+        <Canvas
+          style={{
+            width: '100%',
+            height: WAVEFORM_HEIGHT,
+          }}
+        >
+          {levels.map((level, index) => {
+            const barWidth = 3;
+            const gap = 4;
+            const x = 12 + index * (barWidth + gap);
+
+            const centerY = WAVEFORM_HEIGHT / 2;
+            const halfHeight = Math.max(
+              4,
+              level * (WAVEFORM_HEIGHT / 2 - 12),
+            );
+
+            return (
+              <Line
+                key={index}
+                p1={vec(x, centerY - halfHeight)}
+                p2={vec(x, centerY + halfHeight)}
+                color="#ef4444"
+                strokeWidth={barWidth}
+                strokeCap="round"
+              />
+            );
+          })}
+        </Canvas>
+      </View>
 
       <Pressable
         onPress={
