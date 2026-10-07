@@ -13,11 +13,20 @@ import {
   Line,
   vec,
 } from '@shopify/react-native-skia';
+import { useRecordingStore } from '@/stores/recording-store';
 
 const BAR_COUNT = 40;
 const WAVEFORM_HEIGHT = 140;
 
 export default function HomeScreen() {
+  const {
+    isRecording,
+    recordingUri,
+    setIsRecording,
+    setRecordingUri,
+    setDurationMillis,
+  } = useRecordingStore();
+
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,
     directory: 'document',
@@ -26,7 +35,6 @@ export default function HomeScreen() {
   const recorderState = useAudioRecorderState(recorder);
 
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [recordingUri, setRecordingUri] = useState<string | null>(null);
 
   const [levels, setLevels] = useState<number[]>(
     Array(BAR_COUNT).fill(0.08),
@@ -106,10 +114,10 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    if (!recorderState.isRecording) {
+    if (!isRecording) {
       setLevels(Array(BAR_COUNT).fill(0.08));
     }
-  }, [recorderState.isRecording]);
+  }, [isRecording]);
 
   const startRecording = async () => {
     if (!permissionGranted) {
@@ -122,11 +130,17 @@ export default function HomeScreen() {
 
     try {
       setRecordingUri(null);
+      setDurationMillis(0);
 
       await recorder.prepareToRecordAsync();
+
       recorder.record();
+
+      setIsRecording(true);
     } catch (error) {
       console.error('Failed to start recording:', error);
+
+      setIsRecording(false)
 
       Alert.alert(
         'Recording Error',
@@ -140,6 +154,8 @@ export default function HomeScreen() {
       await recorder.stop();
 
       setRecordingUri(recorder.uri);
+      setIsRecording(false);
+      setDurationMillis(recorderState.durationMillis);
     } catch (error) {
       console.error('Failed to stop recording:', error);
 
@@ -167,7 +183,7 @@ export default function HomeScreen() {
         </Text>
 
         <Text className="mt-2 text-zinc-400">
-          {recorderState.isRecording
+          {isRecording
              ? 'Recording...'
              : 'Ready to record'}
         </Text>
@@ -211,19 +227,19 @@ export default function HomeScreen() {
 
         <Pressable
           onPress={
-            recorderState.isRecording
+            isRecording
               ? stopRecording
               : startRecording
           }
           className={`mt-10 h-24 w-24 items-center justify-center rounded-full ${
-            recorderState.isRecording
+            isRecording
               ? 'bg-red-500'
               : 'bg-white'
           }`}
         >
           <View
             className={`h-8 w-8 ${
-              recorderState.isRecording
+              isRecording
                 ? 'rounded-md bg-white'
                 : 'rounded-full bg-red-500'
             }`}
