@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Alert, Text, View } from 'react-native';
 import {
   AudioModule,
   RecordingPresets,
   setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
   useAudioRecorder,
   useAudioRecorderState,
   useAudioStream,
 } from 'expo-audio';
-import {
-  Canvas,
-  Line,
-  vec,
-} from '@shopify/react-native-skia';
+
 import { useRecordingStore } from '@/stores/recording-store';
 import { RecordingButton } from '@/components/RecordingButton';
 import { VoiceNoteCard } from '@/components/VoiceNoteCard';
@@ -22,6 +20,97 @@ const BAR_COUNT = 40;
 const WAVEFORM_HEIGHT = 140;
 
 export default function HomeScreen() {
+  const audioStream = useAudioStream({
+    channels: 1,
+    encoding: 'float32',
+    sampleRate: 48000,
+
+    onBuffer: (buffer) => {
+      if (isRecording) {
+        return;
+      }
+
+      const samples = new Float32Array(buffer.data);
+
+      if (samples.length === 0) {
+        return;
+      }
+
+      let sumSquares = 0;
+
+      for (let i = 0; i < samples.length; i++) {
+        sumSquares += samples[i] * samples[i];
+      }
+
+      const rms = Math.sqrt(
+        sumSquares / samples.length,
+      );
+
+      const normalizedLevel = Math.min(
+        1,
+        Math.max(0.08, rms * 8),
+      );
+
+      setLevels((current) => [
+        ...current.slice(1),
+        normalizedLevel,
+      ]);
+    },
+  });
+
+  const player = useAudioPlayer(null, {
+    updateInterval: 250,
+  });
+
+  const playerStatus = useAudioPlayerStatus(player);
+
+  const playNote = async (uri: string) => {
+   try {
+    // Stop the idle microphone stream before starting playback.
+    if (audioStream.isStreaming) {
+      await audioStream.stream.stop();
+    }
+
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      allowsRecording: false,
+      interruptionMode: 'doNotMix',
+    });
+
+    // Stop any currently playing audio.
+    player.pause();
+
+    // Load the selected recording.
+    player.replace({ uri });
+
+    // Start playback.
+    player.play();
+   } catch (error) {
+    console.error('Failed to play voice note:', error);
+
+    Alert.alert(
+      'Playback Error',
+      'Unable to play this recording.',
+    );
+
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+
+      if (!audioStream.isStreaming) {
+        await audioStream.stream.start();
+      }
+    } catch (restoreError) {
+      console.error(
+        'Failed to restore audio stream:',
+        restoreError,
+      );
+    }
+   }
+  };
+
   const {
     isRecording,
     recordingUri,
@@ -35,47 +124,19 @@ export default function HomeScreen() {
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,
     directory: 'document',
+    isMeteringEnabled: true,
   });
 
-  const recorderState = useAudioRecorderState(recorder);
+  const recorderState = useAudioRecorderState(
+    recorder,
+    50,
+  );
 
   const [permissionGranted, setPermissionGranted] = useState(false);
 
   const [levels, setLevels] = useState<number[]>(
     Array(BAR_COUNT).fill(0.08),
   );
-
-  const audioStream = useAudioStream({
-    channels: 1,
-    encoding: 'float32',
-    sampleRate: 48000,
-
-    onBuffer: (buffer) => {
-      const samples = new Float32Array(buffer.data);
-
-      if (samples.length === 0) {
-        return;
-      }
-
-      let sumSquares = 0;
-
-      for (let i = 0; i < samples.length; i++) {
-        sumSquares += samples[i] * samples[i];
-      }
-
-      const rms = Math.sqrt(sumSquares / samples.length);
-
-      const normalizedLevel = Math.min(
-        1,
-        Math.max(0.08, rms * 8),
-      );
-
-      setLevels((current) => [
-        ...current.slice(1),
-        normalizedLevel,
-      ]);
-    },
-  });
 
   useEffect(() => {
     const configureAudio = async () => {
@@ -112,17 +173,41 @@ export default function HomeScreen() {
     configureAudio();
 
     return () => {
-      audioStream.stream.stop().catch(() => {
-        // Stream may already be stopped.
-      });
-    };
+      audioStream.stream.stop().catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
     if (!isRecording) {
       setLevels(Array(BAR_COUNT).fill(0.08));
+      return;
     }
-  }, [isRecording]);
+
+    const metering = recorderState.metering;
+
+    if (metering === undefined) {
+      return;
+    }
+
+    // Expo's metering value is expressed in decibels.
+    // Typical microphone values are negative, with values
+    // closer to 0 representing louder sounds.
+    const normalizedLevel = Math.min(
+      1,
+      Math.max(
+        0.08,
+        (metering + 60) / 60,
+      ),
+    );
+
+    setLevels((current) => [
+      ...current.slice(1),
+      normalizedLevel,
+    ]);
+  }, [
+    isRecording,
+    recorderState.metering,
+  ]);
 
   const startRecording = async () => {
     if (!permissionGranted) {
@@ -134,6 +219,16 @@ export default function HomeScreen() {
     }
 
     try {
+      player.pause();
+
+      // Stop the live waveform microphone stream first.
+      await audioStream.stream.stop();
+
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+
       setRecordingUri(null);
       setDurationMillis(0);
 
@@ -158,6 +253,11 @@ export default function HomeScreen() {
     try {
       await recorder.stop();
 
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+      });
+
       const uri = recorder.uri;
 
       if (uri) {
@@ -175,6 +275,9 @@ export default function HomeScreen() {
 
       setIsRecording(false);
       setDurationMillis(recorderState.durationMillis);
+
+      // Resume live microphone visualization
+      await audioStream.stream.start();
     } catch (error) {
       console.error('Failed to stop recording:', error);
 
@@ -234,6 +337,12 @@ export default function HomeScreen() {
               <VoiceNoteCard
                 key={note.id}
                 note={note}
+                isPlaying={
+                  playerStatus.playing &&
+                  playerStatus.currentTime < note.durationMillis / 1000
+                }
+                currentTime={playerStatus.currentTime}
+                onPlay={() => playNote(note.uri)}
               />
             ))}
           </View>
